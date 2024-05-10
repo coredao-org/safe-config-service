@@ -22,9 +22,17 @@ SEM_VER_REGEX = re.compile(
 sem_ver_validator = RegexValidator(SEM_VER_REGEX, "Invalid version (semver)", "invalid")
 
 
-def native_currency_path(instance: "Chain", filename: str) -> str:
+def logo_path(instance: "Chain", filename: str, pathname: str) -> str:
     _, file_extension = os.path.splitext(filename)  # file_extension includes the dot
-    return f"chains/{instance.id}/currency_logo{file_extension}"
+    return f"chains/{instance.id}/{pathname}{file_extension}"
+
+
+def chain_logo_path(instance: "Chain", filename: str) -> str:
+    return logo_path(instance, filename, "chain_logo")
+
+
+def native_currency_path(instance: "Chain", filename: str) -> str:
+    return logo_path(instance, filename, "currency_logo")
 
 
 def validate_native_currency_size(image: Union[str, IO[bytes]]) -> None:
@@ -68,7 +76,17 @@ class Chain(models.Model):
         verbose_name="EIP-3770 short name", max_length=255, unique=True
     )
     description = models.CharField(max_length=255, blank=True)
+    chain_logo_uri = models.ImageField(
+        validators=[
+            validate_native_currency_size
+        ],  # not renamed as used in older migration
+        upload_to=chain_logo_path,
+        max_length=255,
+        null=True,
+        blank=True,
+    )
     l2 = models.BooleanField()
+    is_testnet = models.BooleanField(default=False)
     rpc_authentication = models.CharField(
         max_length=255, choices=RpcAuthentication.choices
     )
@@ -147,16 +165,37 @@ class GasPrice(models.Model):
     rank = models.SmallIntegerField(
         default=100
     )  # A lower number will indicate higher ranking
+    max_fee_per_gas = Uint256Field(
+        verbose_name="Max fee per gas (wei)", blank=True, null=True
+    )  # type: ignore[no-untyped-call]
+    max_priority_fee_per_gas = Uint256Field(
+        verbose_name="Max priority fee per gas (wei)", blank=True, null=True
+    )  # type: ignore[no-untyped-call]
 
     def __str__(self) -> str:
-        return f"Chain = {self.chain.id} | uri={self.oracle_uri} | fixed_wei_value={self.fixed_wei_value}"
+        return f"Chain = {self.chain.id} | uri={self.oracle_uri} | fixed_wei_value={self.fixed_wei_value} | max_fee_per_gas={self.max_fee_per_gas} | max_priority_fee_per-gas={self.max_priority_fee_per_gas}"  # noqa E501
 
     def clean(self) -> None:
-        if (self.fixed_wei_value is not None) == (self.oracle_uri is not None):
+        fixed_wei_defined = self.fixed_wei_value is not None
+        fixed1559_defined = (
+            self.max_fee_per_gas is not None
+            and self.max_priority_fee_per_gas is not None
+        )
+        oracle_defined = self.oracle_uri is not None
+        exactly_one_variant = [
+            fixed_wei_defined,
+            fixed1559_defined,
+            oracle_defined,
+        ].count(True) == 1
+        multiple_variants_error = "An oracle uri, fixed gas price or maxFeePerGas and maxPriorityFeePerGas \
+            should be provided (but not multiple)"
+        if not exactly_one_variant:
             raise ValidationError(
                 {
-                    "oracle_uri": "An oracle uri or fixed gas price should be provided (but not both)",
-                    "fixed_wei_value": "An oracle uri or fixed gas price should be provided (but not both)",
+                    "oracle_uri": multiple_variants_error,
+                    "fixed_wei_value": multiple_variants_error,
+                    "max_fee_per_gas": multiple_variants_error,
+                    "max_priority_fee_per_gas": multiple_variants_error,
                 }
             )
         if self.oracle_uri is not None and self.oracle_parameter is None:

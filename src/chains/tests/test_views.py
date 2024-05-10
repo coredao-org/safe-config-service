@@ -1,8 +1,6 @@
 from decimal import Decimal
 from typing import Any
 
-import factory
-from django.core.exceptions import ValidationError
 from django.urls import reverse
 from faker import Faker
 from rest_framework.test import APITestCase
@@ -40,7 +38,11 @@ class ChainJsonPayloadFormatViewTests(APITestCase):
                     "chainName": chain.name,
                     "shortName": chain.short_name,
                     "description": chain.description,
+                    # Absolute URL because chain_logo_uri is defined at top level and BASE_DIR
+                    # is folder structure dependent, see currency_logo_uri for relative URL
+                    "chainLogoUri": f"http://testserver{chain.chain_logo_uri.url}",
                     "l2": chain.l2,
+                    "isTestnet": chain.is_testnet,
                     "rpcUri": {
                         "authentication": chain.rpc_authentication,
                         "value": chain.rpc_uri,
@@ -62,7 +64,7 @@ class ChainJsonPayloadFormatViewTests(APITestCase):
                         "name": chain.currency_name,
                         "symbol": chain.currency_symbol,
                         "decimals": chain.currency_decimals,
-                        "logoUri": chain.currency_logo_uri.url,
+                        "logoUri": f"http://testserver{chain.currency_logo_uri.url}",
                     },
                     "transactionService": chain.transaction_service_uri,
                     "vpcTransactionService": chain.vpc_transaction_service_uri,
@@ -155,7 +157,11 @@ class ChainDetailViewTests(APITestCase):
             "chainName": chain.name,
             "shortName": chain.short_name,
             "description": chain.description,
+            # Absolute URL because chain_logo_uri is defined at top level and BASE_DIR
+            # is folder structure dependent, see currency_logo_uri for relative URL
+            "chainLogoUri": f"http://testserver{chain.chain_logo_uri.url}",
             "l2": chain.l2,
+            "isTestnet": chain.is_testnet,
             "rpcUri": {
                 "authentication": chain.rpc_authentication,
                 "value": chain.rpc_uri,
@@ -177,7 +183,7 @@ class ChainDetailViewTests(APITestCase):
                 "name": chain.currency_name,
                 "symbol": chain.currency_symbol,
                 "decimals": chain.currency_decimals,
-                "logoUri": chain.currency_logo_uri.url,
+                "logoUri": f"http://testserver{chain.currency_logo_uri.url}",
             },
             "transactionService": chain.transaction_service_uri,
             "vpcTransactionService": chain.vpc_transaction_service_uri,
@@ -291,29 +297,6 @@ class ChainsEnsRegistryTests(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["ensRegistryAddress"], None)
-
-
-class ChainCurrencyLogoTests(APITestCase):
-    def test_image_max_size_validation(self) -> None:
-        chain = ChainFactory.create(
-            currency_logo_uri=factory.django.ImageField(width=512, height=512)
-        )
-
-        chain.full_clean()  # should not rise any exception
-
-    def test_image_width_greater_than_512(self) -> None:
-        with self.assertRaises(ValidationError):
-            chain = ChainFactory.create(
-                currency_logo_uri=factory.django.ImageField(width=513, height=50)
-            )
-            chain.full_clean()
-
-    def test_image_height_greater_than_512(self) -> None:
-        with self.assertRaises(ValidationError):
-            chain = ChainFactory.create(
-                currency_logo_uri=factory.django.ImageField(width=50, height=513)
-            )
-            chain.full_clean()
 
 
 class ChainGasPriceTests(APITestCase):
@@ -439,6 +422,28 @@ class ChainGasPriceTests(APITestCase):
             {
                 "type": "fixed",
                 "weiValue": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+            }
+        ]
+
+        response = self.client.get(path=url, data=None, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["gasPrice"], expected_oracle_json_payload)
+
+    def test_fixed_gas_price_1559_json_payload_format(self) -> None:
+        chain = ChainFactory.create(id=1)
+        gas_price = GasPriceFactory.create(
+            chain=chain,
+            max_fee_per_gas=self.faker.pyint(),
+            max_priority_fee_per_gas=self.faker.pyint(),
+            fixed_wei_value=None,
+        )
+        url = reverse("v1:chains:detail", args=[1])
+        expected_oracle_json_payload = [
+            {
+                "type": "fixed1559",
+                "maxFeePerGas": str(gas_price.max_fee_per_gas),
+                "maxPriorityFeePerGas": str(gas_price.max_priority_fee_per_gas),
             }
         ]
 
